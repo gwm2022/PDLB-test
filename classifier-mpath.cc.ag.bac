@@ -1,0 +1,788 @@
+/* -*-	Mode:C++; c-basic-offset:8; tab-width:8; indent-tabs-mode:t -*- */
+
+/*
+ * Copyright (C) 1997 by the University of Southern California
+ * $Id: classifier-mpath.cc,v 1.10 2005/08/25 18:58:01 johnh Exp $
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 59 Temple Place, Suite 330, Boston, MA 02111-1307, USA.
+ *
+ *
+ * The copyright of this module includes the following
+ * linking-with-specific-other-licenses addition:
+ *
+ * In addition, as a special exception, the copyright holders of
+ * this module give you permission to combine (via static or
+ * dynamic linking) this module with free software programs or
+ * libraries that are released under the GNU LGPL and with code
+ * included in the standard release of ns-2 under the Apache 2.0
+ * license or under otherwise-compatible licenses with advertising
+ * requirements (or modified versions of such code, with unchanged
+ * license).  You may copy and distribute such a system following the
+ * terms of the GNU GPL for this module and the licenses of the
+ * other code concerned, provided that you include the source code of
+ * that other code when and as the GNU GPL requires distribution of
+ * source code.
+ *
+ * Note that people who make modified versions of this module
+ * are not obligated to grant this special exception for their
+ * modified versions; it is their choice whether to do so.  The GNU
+ * General Public License gives permission to release a modified
+ * version without this exception; this exception also makes it
+ * possible to release a modified version which carries forward this
+ * exception.
+ *
+ */
+/*
+*function:determine the scheduled granularity according to the difference of queues
+*author:ljl
+*time:20180603
+update:20190119
+*/
+#ifndef lint
+static const char rcsid[] =
+    "@(#) $Header: /cvsroot/nsnam/ns-2/classifier/classifier-mpath.cc,v 1.10 2005/08/25 18:58:01 johnh Exp $ (USC/ISI)";
+#endif
+
+#include "classifier.h"
+#include<stdio.h> 
+#include<sys/time.h>
+#include<time.h>
+#include "random.h" 
+#include "ip.h"
+#include "queue.h"
+#include "packet.h"
+#include "math.h"
+//based on classifier-mpath.cc.ljlv11.bac
+//note:the number of flow must be less than 500
+int pid[500]={0}; //packet id of one flow
+int flowcell_path[500]; //flowcell path
+int pathnum=0;  //the number of path
+int badpath=1;  //the number of bad path
+double rttbase=0.00025;
+//double rttbad=0.00005+rttbase;
+double rttbad=0.00005+rttbase;
+int granularity=1;
+int flow_eachpod=16-1;
+float sample_interval=0.0001;
+//--------------------------------------------------------------select path---------------------------------------------------
+//select the shortest queue
+int b1[2]={0,0};
+int *selectmin1(int a[],int c){       //a[] is the length of queue,c is the number of paths,select the first smallest
+	
+	
+	b1[0]=a[1];
+	for(int i=1;i<=c;i++){
+		if(a[i]<b1[0]) {
+		b1[0]=a[i];
+	}}
+	for(int j=1;j<=c;j++){
+		if(a[j]==b1[0]){
+		b1[1]=j;
+		break;
+	}}
+	return b1;
+}
+
+int b2[2]={0,0};
+int *selectmin2(int a[],int c){       //a[] is the length of queue,c is the number of paths,select the first smallest
+	
+	
+	b2[0]=a[9];
+	for(int i=9;i<=c*2;i++){
+		if(a[i]<b2[0]) {
+		b2[0]=a[i];
+	}}
+	for(int j=9;j<=c*2;j++){
+		if(a[j]==b2[0]){
+		b2[1]=j;
+		break;
+	}}
+	return b2;
+}
+
+int b3[2]={0,0};
+int *selectmin3(int a[],int c){       //a[] is the length of queue,c is the number of paths,select the first smallest
+	
+	
+	b3[0]=a[17];
+	for(int i=17;i<=c*3;i++){
+		if(a[i]<b3[0]) {
+		b3[0]=a[i];
+	}}
+	for(int j=17;j<=c*3;j++){
+		if(a[j]==b3[0]){
+		b3[1]=j;
+		break;
+	}}
+	return b3;
+}
+
+int b4[2]={0,0};
+int *selectmin4(int a[],int c){       //a[] is the length of queue,c is the number of paths,select the first smallest
+	
+	
+	b4[0]=a[25];
+	for(int i=25;i<=c*4;i++){
+		if(a[i]<b4[0]) {
+		b4[0]=a[i];
+	}}
+	for(int j=25;j<=c*4;j++){
+		if(a[j]==b4[0]){
+		b4[1]=j;
+		break;
+	}}
+	return b4;
+}
+
+
+
+
+
+//power of two choice
+int ptc1[2]={0,0};
+int *powerOfTwoChoice1(int a[],int c){       //a[] is the length of queue,c is the number of paths,select the first smallest
+    int i =(int)Random::uniform(1,c+1);
+    int j =(int)Random::uniform(1,c+1);
+    if(a[i]<=a[j]){
+       ptc1[0]=a[i];
+       ptc1[1]=i;
+    }else{
+       ptc1[0]=a[j];
+       ptc1[1]=j;
+    }
+    return ptc1;
+}
+
+int ptc2[2]={0,0};
+int *powerOfTwoChoice2(int a[],int c){       //a[] is the length of queue,c is the number of paths,select the first smallest
+    int i =(int)Random::uniform(9,c*2+1);
+    int j =(int)Random::uniform(9,c*2+1);
+    if(a[i]<=a[j]){
+       ptc2[0]=a[i];
+       ptc2[1]=i;
+    }else{
+       ptc2[0]=a[j];
+       ptc2[1]=j;
+    }
+    return ptc2;
+}
+
+int ptc3[2]={0,0};
+int *powerOfTwoChoice3(int a[],int c){       //a[] is the length of queue,c is the number of paths,select the first smallest
+    int i =(int)Random::uniform(17,c*3+1);
+    int j =(int)Random::uniform(17,c*3+1);
+    if(a[i]<=a[j]){
+       ptc3[0]=a[i];
+       ptc3[1]=i;
+    }else{
+       ptc3[0]=a[j];
+       ptc3[1]=j;
+    }
+    return ptc3;
+}
+
+int ptc4[2]={0,0};
+int *powerOfTwoChoice4(int a[],int c){       //a[] is the length of queue,c is the number of paths,select the first smallest
+    int i =(int)Random::uniform(25,c*4+1);
+    int j =(int)Random::uniform(25,c*4+1);
+    if(a[i]<=a[j]){
+       ptc4[0]=a[i];
+       ptc4[1]=i;
+    }else{
+       ptc4[0]=a[j];
+       ptc4[1]=j;
+    }
+    return ptc4;
+}
+
+
+//-------------------------------------------------------------------caculate the best granularity based on difference---------------------------
+
+//enumerate the granularity from 1 to 44, calculate the minimal FCT based on model, return the best granularity 
+int enumerate_gran1(int a[],int c,int b, double rttbase, double rttbad){ //a[] is the length of queue,
+                                                           //c is the number of paths, 
+                                                           //b is the number of bad paths,
+                                                           //rttbase is basic rtt, 
+                                                           //rttbad is the rtt of bad path.
+      double rtt[100]={0};  //100 limits the number of paths
+      double sum=0;
+      double aver=0;
+      int count=0;
+      double sum_of_square=0;
+      double diff_stdf=0;
+      for(int i=1;i<=c-b;i++){     //1 to c-b paths are good paths 
+          rtt[i]=double(a[i])*1500*8/1000000000 + rttbase;         
+      }
+      for(int i=c-b+1;i<=c;i++){  //b to c paths are bad paths
+          rtt[i]=double(a[i])*1500*8/1000000000 + rttbad;         
+      } 
+      
+      //caculate the number of congested paths whose delay is larger than average rtt
+      double diff=0;
+      double max=rtt[1];
+      double min=rtt[1];
+      for(int i=2;i<=c;i++){
+             if(max<rtt[i]){
+                  max=rtt[i];
+             }
+             if(min>rtt[i]){
+                  min=rtt[i];
+             }
+      }
+      diff=max-min;
+      if(diff>3/(1000000000/12000)){
+            for(int i=1;i<=c;i++){
+                  sum=rtt[i]+sum;
+            }
+            aver=sum/c;
+            for(int i=1;i<=c;i++){
+                  if(rtt[i]>aver){count++;}
+            }
+            b=count;
+      }else {b=0;}
+      
+      if(b==0){
+          granularity=1;   
+      }else{
+          double x=0;  //x is the number of packet trains; 
+          double pb=0; //pb is the selected probability of bad path; 
+          pb=b*1.0/c;
+          double pg=1-pb; //pg is the selected probability of good path; 
+          double bandwidth=1000000/12000;
+          double sendrate[50]={0};
+          for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){ 
+
+                 x=double(44/Enum_gran);
+                 double p=0; //p is the probability of reordering;
+                 double rttaver=0; //rtt is the average RTT
+                 double wt=0;
+
+                 //caculate the probability of reordering
+                 for(int j=1;j<x-1;j++){
+                       p=pow(pg,j-1)*pb*(1-pow(pb,x-j))+p;
+                 }
+
+                 //caculate the average congestion window
+                 wt=(1-p)*44+p*22;
+
+                 //caculate the average rtt
+                 rttaver=44*1.0/(x*bandwidth)+pow(pg,x)*rttbase*1000+(1-pow(pg,x))*rttbad*1000;
+          
+                 //caculate sending rate of each enumerate granularity
+                 sendrate[Enum_gran]=wt/rttaver;
+          }
+         //search the maximal sending rate,return its granularity
+         double temp=sendrate[1];
+         for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){
+                 if(sendrate[Enum_gran]>temp){temp=sendrate[Enum_gran];}
+         }
+
+         for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){
+                 if(sendrate[Enum_gran]==temp){
+                      granularity=Enum_gran;
+                      break;
+                 }
+         }
+      }
+      return granularity;
+       
+}
+
+int enumerate_gran2(int a[],int c,int b, double rttbase, double rttbad){ //a[] is the length of queue,
+                                                           //c is the number of paths, 
+                                                           //b is the number of bad paths,
+                                                           //rttbase is basic rtt, 
+                                                           //rttbad is the rtt of bad path.
+      double rtt[100]={0};  //100 limits the number of paths
+      double sum=0;
+      double aver=0;
+      int count=0;
+      double sum_of_square=0;
+      double diff_stdf=0;
+      for(int i=9;i<=c-b+8;i++){     //1 to c-b paths are good paths 
+          rtt[i]=double(a[i])*1500*8/1000000000 + rttbase;         
+      }
+      for(int i=c-b+1+8;i<=c*2;i++){  //b to c paths are bad paths
+          rtt[i]=double(a[i])*1500*8/1000000000 + rttbad;         
+      } 
+      
+      //caculate the number of congested paths whose delay is larger than average rtt
+      double diff=0;
+      double max=rtt[9];
+      double min=rtt[9];
+      for(int i=9;i<=c*2;i++){
+             if(max<rtt[i]){
+                  max=rtt[i];
+             }
+             if(min>rtt[i]){
+                  min=rtt[i];
+             }
+      }
+      diff=max-min;
+      if(diff>3/(1000000000/12000)){
+            for(int i=9;i<=c*2;i++){
+                  sum=rtt[i]+sum;
+            }
+            aver=sum/c;
+            for(int i=9;i<=c*2;i++){
+                  if(rtt[i]>aver){count++;}
+            }
+            b=count;
+      }else {b=0;}
+      
+      if(b==0){
+          granularity=1;   
+      }else{
+          double x=0;  //x is the number of packet trains; 
+          double pb=0; //pb is the selected probability of bad path; 
+          pb=b*1.0/c;
+          double pg=1-pb; //pg is the selected probability of good path; 
+          double bandwidth=1000000/12000;
+          double sendrate[50]={0};
+          for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){ 
+
+                 x=double(44/Enum_gran);
+                 double p=0; //p is the probability of reordering;
+                 double rttaver=0; //rtt is the average RTT
+                 double wt=0;
+
+                 //caculate the probability of reordering
+                 for(int j=1;j<x-1;j++){
+                       p=pow(pg,j-1)*pb*(1-pow(pb,x-j))+p;
+                 }
+
+                 //caculate the average congestion window
+                 wt=(1-p)*44+p*22;
+
+                 //caculate the average rtt
+                 rttaver=44*1.0/(x*bandwidth)+pow(pg,x)*rttbase*1000+(1-pow(pg,x))*rttbad*1000;
+          
+                 //caculate sending rate of each enumerate granularity
+                 sendrate[Enum_gran]=wt/rttaver;
+          }
+         //search the maximal sending rate,return its granularity
+         double temp=sendrate[1];
+         for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){
+                 if(sendrate[Enum_gran]>temp){temp=sendrate[Enum_gran];}
+         }
+
+         for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){
+                 if(sendrate[Enum_gran]==temp){
+                      granularity=Enum_gran;
+                      break;
+                 }
+         }
+      }
+      return granularity;
+       
+}
+
+int enumerate_gran3(int a[],int c,int b, double rttbase, double rttbad){ //a[] is the length of queue,
+                                                           //c is the number of paths, 
+                                                           //b is the number of bad paths,
+                                                           //rttbase is basic rtt, 
+                                                           //rttbad is the rtt of bad path.
+      double rtt[100]={0};  //100 limits the number of paths
+      double sum=0;
+      double aver=0;
+      int count=0;
+      double sum_of_square=0;
+      double diff_stdf=0;
+      for(int i=17;i<=c-b+16;i++){     //1 to c-b paths are good paths 
+          rtt[i]=double(a[i])*1500*8/1000000000 + rttbase;         
+      }
+      for(int i=c-b+1+16;i<=c*3;i++){  //b to c paths are bad paths
+          rtt[i]=double(a[i])*1500*8/1000000000 + rttbad;         
+      } 
+      
+      //caculate the number of congested paths whose delay is larger than average rtt
+      double diff=0;
+      double max=rtt[17];
+      double min=rtt[17];
+      for(int i=17;i<=c*3;i++){
+             if(max<rtt[i]){
+                  max=rtt[i];
+             }
+             if(min>rtt[i]){
+                  min=rtt[i];
+             }
+      }
+      diff=max-min;
+      if(diff>3/(1000000000/12000)){
+            for(int i=17;i<=c*3;i++){
+                  sum=rtt[i]+sum;
+            }
+            aver=sum/c;
+            for(int i=17;i<=c*3;i++){
+                  if(rtt[i]>aver){count++;}
+            }
+            b=count;
+      }else {b=0;}
+      
+      if(b==0){
+          granularity=1;   
+      }else{
+          double x=0;  //x is the number of packet trains; 
+          double pb=0; //pb is the selected probability of bad path; 
+          pb=b*1.0/c;
+          double pg=1-pb; //pg is the selected probability of good path; 
+          double bandwidth=1000000/12000;
+          double sendrate[50]={0};
+          for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){ 
+
+                 x=double(44/Enum_gran);
+                 double p=0; //p is the probability of reordering;
+                 double rttaver=0; //rtt is the average RTT
+                 double wt=0;
+
+                 //caculate the probability of reordering
+                 for(int j=1;j<x-1;j++){
+                       p=pow(pg,j-1)*pb*(1-pow(pb,x-j))+p;
+                 }
+
+                 //caculate the average congestion window
+                 wt=(1-p)*44+p*22;
+
+                 //caculate the average rtt
+                 rttaver=44*1.0/(x*bandwidth)+pow(pg,x)*rttbase*1000+(1-pow(pg,x))*rttbad*1000;
+          
+                 //caculate sending rate of each enumerate granularity
+                 sendrate[Enum_gran]=wt/rttaver;
+          }
+         //search the maximal sending rate,return its granularity
+         double temp=sendrate[1];
+         for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){
+                 if(sendrate[Enum_gran]>temp){temp=sendrate[Enum_gran];}
+         }
+
+         for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){
+                 if(sendrate[Enum_gran]==temp){
+                      granularity=Enum_gran;
+                      break;
+                 }
+         }
+      }
+      return granularity;
+       
+}
+
+
+int enumerate_gran4(int a[],int c,int b, double rttbase, double rttbad){ //a[] is the length of queue,
+                                                           //c is the number of paths, 
+                                                           //b is the number of bad paths,
+                                                           //rttbase is basic rtt, 
+                                                           //rttbad is the rtt of bad path.
+      double rtt[100]={0};  //100 limits the number of paths
+      double sum=0;
+      double aver=0;
+      int count=0;
+      double sum_of_square=0;
+      double diff_stdf=0;
+      for(int i=25;i<=c*4-b;i++){     //1 to c-b paths are good paths 
+          rtt[i]=double(a[i])*1500*8/1000000000 + rttbase;         
+      }
+      for(int i=c*4-b+1;i<=c*4;i++){  //b to c paths are bad paths
+          rtt[i]=double(a[i])*1500*8/1000000000 + rttbad;         
+      } 
+      
+      //caculate the number of congested paths whose delay is larger than average rtt
+      double diff=0;
+      double max=rtt[25];
+      double min=rtt[25];
+      for(int i=25;i<=c*4;i++){
+             if(max<rtt[i]){
+                  max=rtt[i];
+             }
+             if(min>rtt[i]){
+                  min=rtt[i];
+             }
+      }
+      diff=max-min;
+      if(diff>3/(1000000000/12000)){
+            for(int i=25;i<=c*4;i++){
+                  sum=rtt[i]+sum;
+            }
+            aver=sum/c;
+            for(int i=25;i<=c*4;i++){
+                  if(rtt[i]>aver){count++;}
+            }
+            b=count;
+      }else {b=0;}
+      
+      if(b==0){
+          granularity=1;   
+      }else{
+          double x=0;  //x is the number of packet trains; 
+          double pb=0; //pb is the selected probability of bad path; 
+          pb=b*1.0/c;
+          double pg=1-pb; //pg is the selected probability of good path; 
+          double bandwidth=1000000/12000;
+          double sendrate[50]={0};
+          for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){ 
+
+                 x=double(44/Enum_gran);
+                 double p=0; //p is the probability of reordering;
+                 double rttaver=0; //rtt is the average RTT
+                 double wt=0;
+
+                 //caculate the probability of reordering
+                 for(int j=1;j<x-1;j++){
+                       p=pow(pg,j-1)*pb*(1-pow(pb,x-j))+p;
+                 }
+
+                 //caculate the average congestion window
+                 wt=(1-p)*44+p*22;
+
+                 //caculate the average rtt
+                 rttaver=44*1.0/(x*bandwidth)+pow(pg,x)*rttbase*1000+(1-pow(pg,x))*rttbad*1000;
+          
+                 //caculate sending rate of each enumerate granularity
+                 sendrate[Enum_gran]=wt/rttaver;
+          }
+         //search the maximal sending rate,return its granularity
+         double temp=sendrate[1];
+         for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){
+                 if(sendrate[Enum_gran]>temp){temp=sendrate[Enum_gran];}
+         }
+
+         for(int Enum_gran=1;Enum_gran<=44;Enum_gran++){
+                 if(sendrate[Enum_gran]==temp){
+                      granularity=Enum_gran;
+                      break;
+                 }
+         }
+      }
+      return granularity;
+       
+}
+
+
+
+
+//---------------------------------------------------------------update the granularity periodically-----------------------------------------------
+//timer:update the granularity periodically
+double last_time1=0.1;
+double current_time1=0;
+int real_gran1=1;
+void timer1(){           
+      current_time1=Scheduler::instance().clock();
+      double temp=current_time1-last_time1;
+      if(temp>=sample_interval){
+           
+            real_gran1=enumerate_gran1(qlenAr,pathnum,badpath,rttbase,rttbad);
+
+            last_time1=current_time1;
+      } 
+}
+
+double last_time2=0.1;
+double current_time2=0;
+int real_gran2=1;
+void timer2(){           
+      current_time2=Scheduler::instance().clock();
+      double temp=current_time2-last_time2;
+      if(temp>=sample_interval){
+           
+            real_gran2=enumerate_gran2(qlenAr,pathnum,badpath,rttbase,rttbad);
+
+            last_time2=current_time2;
+      } 
+}
+
+double last_time3=0.1;
+double current_time3=0;
+int real_gran3=1;
+void timer3(){           
+      current_time3=Scheduler::instance().clock();
+      double temp=current_time3-last_time3;
+      if(temp>=sample_interval){
+           
+            real_gran3=enumerate_gran3(qlenAr,pathnum,badpath,rttbase,rttbad);
+
+            last_time3=current_time3;
+      } 
+}
+
+double last_time4=0.1;
+double current_time4=0;
+int real_gran4=1;
+void timer4(){           
+      current_time4=Scheduler::instance().clock();
+      double temp=current_time4-last_time4;
+      if(temp>=sample_interval){
+           
+            real_gran4=enumerate_gran4(qlenAr,pathnum,badpath,rttbase,rttbad);
+
+            last_time4=current_time4;
+      } 
+}
+
+
+class MultiPathForwarder : public Classifier {
+public:
+	MultiPathForwarder() : ns_(0) {} 
+	virtual int classify(Packet* p) {
+		     int cl=0;
+		     int fail = ns_; 
+		     hdr_ip* iph=hdr_ip::access(p);
+                     int fid = iph->flowid();
+		     int databytes=hdr_cmn::access(p)->size();
+                     pathnum=maxslot_+1;
+                      
+                     if(fid<flow_eachpod){
+                          timer1();
+                          if(pid[fid]==0 && databytes==1500 ){           
+		    		flowcell_path[fid]=(int)Random::uniform(0,maxslot_+1);	//select the path at random style
+   		    		pid[fid]++;
+		    		cl=flowcell_path[fid];
+
+             		  }else if(pid[fid]!=0 && databytes==1500 ){
+                     
+		                if(pid[fid]%real_gran1!=0){       
+			              pid[fid]++;
+ 			              cl=flowcell_path[fid];
+				
+		                }else{
+                                      //1.select the path at random style
+		                      flowcell_path[fid]=(int)Random::uniform(0,maxslot_+1);
+	
+                                      //2. select the shortest queue
+                                      //flowcell_path[fid]=selectmin1(qlenAr,pathnum)[1]-1;     
+
+                                      //3. select the power of two choice
+                                      //flowcell_path[fid]=powerOfTwoChoice1(qlenAr,pathnum)[1]-1; 
+
+                                      pid[fid]=1;
+			              cl=flowcell_path[fid];
+                                }
+		          }else{
+                                do{
+                                      cl = ns_++; 
+	                              ns_ %= (maxslot_ + 1);
+                                   }while (slot_[cl] == 0 && ns_ != fail);
+		          }
+             
+                     }else if(fid>=flow_eachpod&&fid<flow_eachpod*2){
+                          timer2();
+                          if(pid[fid]==0 && databytes==1500 ){           
+		    		flowcell_path[fid]=(int)Random::uniform(0,maxslot_+1);	//select the path at random style
+   		    		pid[fid]++;
+		    		cl=flowcell_path[fid];
+
+             		  }else if(pid[fid]!=0 && databytes==1500 ){
+                     
+		                if(pid[fid]%real_gran2!=0){       
+			              pid[fid]++;
+ 			              cl=flowcell_path[fid];
+				
+		                }else{
+                                      //1.select the path at random style
+		                      flowcell_path[fid]=(int)Random::uniform(0,maxslot_+1);
+	
+                                      //2. select the shortest queue
+                                      //flowcell_path[fid]=selectmin2(qlenAr,pathnum)[1]-1-8;     
+
+                                      //3. select the power of two choice
+                                      //flowcell_path[fid]=powerOfTwoChoice2(qlenAr,pathnum)[1]-1-8; 
+
+                                      pid[fid]=1;
+			              cl=flowcell_path[fid];
+                                }
+		          }else{
+                                do{
+                                      cl = ns_++; 
+	                              ns_ %= (maxslot_ + 1);
+                                   }while (slot_[cl] == 0 && ns_ != fail);
+		          }
+                     }else if(fid>=flow_eachpod*2&&fid<flow_eachpod*3){
+                          timer3();
+                          if(pid[fid]==0 && databytes==1500 ){           
+		    		flowcell_path[fid]=(int)Random::uniform(0,maxslot_+1);	//select the path at random style
+   		    		pid[fid]++;
+		    		cl=flowcell_path[fid];
+
+             		  }else if(pid[fid]!=0 && databytes==1500 ){
+                     
+		                if(pid[fid]%real_gran3!=0){       
+			              pid[fid]++;
+ 			              cl=flowcell_path[fid];
+				
+		                }else{
+                                      //1.select the path at random style
+		                      flowcell_path[fid]=(int)Random::uniform(0,maxslot_+1);
+	
+                                      //2. select the shortest queue
+                                      //flowcell_path[fid]=selectmin3(qlenAr,pathnum)[1]-1-16;     
+
+                                      //3. select the power of two choice
+                                      //flowcell_path[fid]=powerOfTwoChoice3(qlenAr,pathnum)[1]-1-16; 
+
+                                      pid[fid]=1;
+			              cl=flowcell_path[fid];
+                                }
+		          }else{
+                                do{
+                                      cl = ns_++; 
+	                              ns_ %= (maxslot_ + 1);
+                                   }while (slot_[cl] == 0 && ns_ != fail);
+		          }
+                     }else{
+                          timer4();
+                          if(pid[fid]==0 && databytes==1500 ){           
+		    		flowcell_path[fid]=(int)Random::uniform(0,maxslot_+1);	//select the path at random style
+   		    		pid[fid]++;
+		    		cl=flowcell_path[fid];
+
+             		  }else if(pid[fid]!=0 && databytes==1500 ){
+                     
+		                if(pid[fid]%real_gran4!=0){       
+			              pid[fid]++;
+ 			              cl=flowcell_path[fid];
+				
+		                }else{
+                                      //1.select the path at random style
+		                      flowcell_path[fid]=(int)Random::uniform(0,maxslot_+1);
+	
+                                      //2. select the shortest queue
+                                      //flowcell_path[fid]=selectmin4(qlenAr,pathnum)[1]-1-24;     
+
+                                      //3. select the power of two choice
+                                      //flowcell_path[fid]=powerOfTwoChoice4(qlenAr,pathnum)[1]-1-24; 
+
+                                      pid[fid]=1;
+			              cl=flowcell_path[fid];
+                                }
+		          }else{
+                                do{
+                                      cl = ns_++; 
+	                              ns_ %= (maxslot_ + 1);
+                                   }while (slot_[cl] == 0 && ns_ != fail);
+		          }
+                     }
+                     
+//printf("time3: %f fid: %d flowcell_path[fid]: %d  q1: %d %d %d %d %d %d %d %d %d %d \n",Scheduler::instance().clock(),iph->fid_,flowcell_path[fid],qlenAr[1],qlenAr[2],qlenAr[3],qlenAr[4],qlenAr[5],qlenAr[6],qlenAr[7],qlenAr[8],qlenAr[9],qlenAr[10]);
+		     return cl;	
+               		
+	}
+private:
+	int ns_;
+};
+
+static class MultiPathClass : public TclClass {
+public:
+	MultiPathClass() : TclClass("Classifier/MultiPath") {} 
+	TclObject* create(int, const char*const*) {
+		return (new MultiPathForwarder());
+	}
+} class_multipath;
